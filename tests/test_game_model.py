@@ -1,8 +1,11 @@
 import unittest
 from collections import deque
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from arrow_game.levels import LEVELS
 from arrow_game.model import Arrow, Direction, GameEngine, GameState, Level
+from arrow_game.progress import load_progress, save_progress
 
 
 class GameEngineTest(unittest.TestCase):
@@ -67,6 +70,25 @@ class GameEngineTest(unittest.TestCase):
         self.assertEqual(self.game.remaining_misses, 2)
         self.assertEqual(self.game.state, GameState.PLAYING)
 
+    def test_hint_returns_an_unblocked_arrow(self) -> None:
+        hint = self.game.hint()
+        self.assertIsNotNone(hint)
+        self.assertIsNone(self.game.find_blocker(hint))
+
+    def test_undo_restores_arrow_misses_and_score(self) -> None:
+        self.game.click(1, 2)
+        self.assertEqual(self.game.score, 100)
+        self.assertTrue(self.game.undo())
+        self.assertIsNotNone(self.game.arrow_at(1, 2))
+        self.assertEqual(self.game.remaining_misses, 2)
+        self.assertEqual(self.game.score, 0)
+
+    def test_level_selection_loads_requested_level(self) -> None:
+        game = GameEngine(LEVELS)
+        game.select_level(2)
+        self.assertEqual(game.level_index, 2)
+        self.assertEqual(game.state, GameState.PLAYING)
+
 
 class LevelDesignTest(unittest.TestCase):
     @staticmethod
@@ -93,6 +115,22 @@ class LevelDesignTest(unittest.TestCase):
         for level in LEVELS:
             with self.subTest(level=level.name):
                 self.assertTrue(self.has_solution(level))
+
+
+class ProgressTest(unittest.TestCase):
+    def test_progress_can_be_saved_and_loaded(self) -> None:
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "progress.json"
+            save_progress(path, 3, {0: 3, 1: 2})
+            unlocked, stars = load_progress(path, len(LEVELS))
+            self.assertEqual(unlocked, 3)
+            self.assertEqual(stars, {0: 3, 1: 2})
+
+    def test_broken_progress_file_is_safe(self) -> None:
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "progress.json"
+            path.write_text("不是 JSON", encoding="utf-8")
+            self.assertEqual(load_progress(path, len(LEVELS)), (0, {}))
 
 
 if __name__ == "__main__":

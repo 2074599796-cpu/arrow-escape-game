@@ -38,7 +38,18 @@ def main() -> None:
         time.sleep(0.01)
     assert not app.animating, "飞出动画未按预期结束"
     assert app.engine.arrow_at(0, 2) is None, "无阻挡飞剑应飞出并消失"
-    print("GUI smoke test OK: collision bounce and accelerated flying-sword exit both finished")
+    assert app.engine.score == 100, "飞剑飞出后应获得积分"
+
+    app.undo_last()
+    root.update()
+    assert app.engine.arrow_at(0, 2) is not None, "撤销后飞剑应恢复"
+    assert app.engine.score == 0, "撤销后积分应恢复"
+
+    app.show_hint()
+    root.update()
+    assert app.engine.hint() is not None, "提示应能找到无阻挡飞剑"
+    assert "剑意所指" in app.status_label.cget("text"), "界面应显示提示位置"
+    print("GUI smoke test OK: collision, flight, score, undo and hint all finished")
     root.destroy()
 
 

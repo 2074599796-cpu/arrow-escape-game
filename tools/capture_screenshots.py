@@ -40,8 +40,13 @@ def main() -> None:
     root.geometry("860x760+80+60")
     root.attributes("-topmost", True)
     app = ArrowGameApp(root)
+    app.progress_path = output_dir / ".capture_progress.json"
 
     capture(root, output_dir / "start.png")
+    app.unlocked_level = len(app.engine.levels) - 1
+    app.best_stars = {0: 3, 1: 2, 2: 1}
+    app.show_level_select()
+    capture(root, output_dir / "level_select.png")
     app.start_game()
     capture(root, output_dir / "game.png")
 
@@ -72,10 +77,12 @@ def main() -> None:
             app.render_collision_frame(blocked_arrow, blocker, travel, 0.35)
             capture(root, output_dir / "collision.png")
 
+    app.engine.score = 600
     app.show_result(game_won=False)
     capture(root, output_dir / "success.png")
 
     root.destroy()
+    app.progress_path.unlink(missing_ok=True)
     print(f"已生成截图：{output_dir}")
 
 

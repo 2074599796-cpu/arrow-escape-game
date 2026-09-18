@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 import math
+import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import font as tkfont
 
+try:
+    import winsound
+except ImportError:  # 非 Windows 系统仍可正常运行
+    winsound = None
+
 from .levels import LEVELS
 from .model import Arrow, Direction, GameEngine, GameState, MoveResult
+from .progress import default_progress_path, load_progress, save_progress
 
 
 BG = "#090d0b"
@@ -34,6 +41,13 @@ class ArrowGameApp:
         self.board_top = 0.0
         self.cell = 0.0
         self.hover_arrow: Arrow | None = None
+        self.timer_job: str | None = None
+        self.level_started_at = time.monotonic()
+        self.elapsed_seconds = 0
+        self.progress_path = default_progress_path()
+        self.unlocked_level, self.best_stars = load_progress(
+            self.progress_path, len(self.engine.levels)
+        )
         self.sword_images = self.load_sword_images()
         self.start_background = tk.PhotoImage(
             file=str(Path(__file__).resolve().parents[1] / "assets" / "start_background.png")
@@ -45,6 +59,9 @@ class ArrowGameApp:
         root.configure(bg=BG)
         root.bind("<Key-r>", lambda _event: self.restart_level())
         root.bind("<Key-R>", lambda _event: self.restart_level())
+        root.bind("<Key-h>", lambda _event: self.show_hint())
+        root.bind("<Key-H>", lambda _event: self.show_hint())
+        root.bind("<Control-z>", lambda _event: self.undo_last())
         self.show_start()
 
     @staticmethod
@@ -62,25 +79,48 @@ class ArrowGameApp:
         }
 
     def clear(self) -> None:
+        if self.timer_job is not None:
+            try:
+                self.root.after_cancel(self.timer_job)
+            except tk.TclError:
+                pass
+            self.timer_job = None
         for child in self.root.winfo_children():
             child.destroy()
 
-    def make_button(self, parent: tk.Misc, text: str, command, primary: bool = True) -> tk.Button:
+    def make_button(
+        self, parent: tk.Misc, text: str, command,
+        primary: bool = True, compact: bool = False,
+    ) -> tk.Button:
         return tk.Button(
             parent,
             text=text,
             command=command,
-            font=("Microsoft YaHei UI", 13, "bold"),
+            font=("Microsoft YaHei UI", 10 if compact else 13, "bold"),
             fg=BG if primary else WHITE,
             bg=YELLOW if primary else PANEL,
             activebackground=GREEN if primary else GRID,
             activeforeground=BG if primary else WHITE,
             relief="flat",
             bd=0,
-            padx=28,
-            pady=12,
+            padx=12 if compact else 28,
+            pady=8 if compact else 12,
             cursor="hand2",
         )
+
+    @staticmethod
+    def play_sound(kind: str) -> None:
+        if winsound is None:
+            return
+        sounds = {
+            "fly": winsound.MB_OK,
+            "collision": winsound.MB_ICONHAND,
+            "clear": winsound.MB_ICONASTERISK,
+        }
+        try:
+            winsound.MessageBeep(sounds.get(kind, winsound.MB_OK))
+        except RuntimeError:
+            pass
 
     def show_start(self) -> None:
         self.clear()
@@ -105,10 +145,14 @@ class ArrowGameApp:
             text="无阻则出剑 · 有阻则损剑心 · 清空剑阵即可破境",
             font=("STKaiti", 14), fill=WHITE,
         )
-        start_button = self.make_button(canvas, "执剑入局", self.start_game)
-        canvas.create_window(self.WIDTH / 2, 705, window=start_button)
+        button_row = tk.Frame(canvas, bg="#101512")
+        self.make_button(button_row, "执剑入局", self.start_game).pack(side="left", padx=6)
+        self.make_button(
+            button_row, "境界选择", self.show_level_select, primary=False
+        ).pack(side="left", padx=6)
+        canvas.create_window(self.WIDTH / 2, 705, window=button_row)
         canvas.create_text(
-            self.WIDTH / 2, 748, text="剑阵中按 R 可重整当前境界",
+            self.WIDTH / 2, 748, text="R 重整剑阵 · H 提示 · Ctrl+Z 撤销",
             font=("Microsoft YaHei UI", 9), fill="#c5cec6",
         )
 
@@ -116,17 +160,62 @@ class ArrowGameApp:
         self.engine.restart_game()
         self.show_game()
 
+    def show_level_select(self) -> None:
+        self.clear()
+        wrap = tk.Frame(self.root, bg=BG, padx=70, pady=42)
+        wrap.pack(fill="both", expand=True)
+        tk.Label(
+            wrap, text="择境问剑", font=("STKaiti", 38, "bold"), fg=YELLOW, bg=BG,
+        ).pack(pady=(20, 8))
+        tk.Label(
+            wrap, text="通关后自动解锁下一境，进度会保存到本机",
+            font=("Microsoft YaHei UI", 11), fg=MUTED, bg=BG,
+        ).pack(pady=(0, 24))
+        for index, level in enumerate(self.engine.levels):
+            unlocked = index <= self.unlocked_level
+            stars = "★" * self.best_stars.get(index, 0) or "尚未通关"
+            text = f"第 {index + 1} 境 · {level.name}    {stars}" if unlocked else f"第 {index + 1} 境 · 尚未解锁"
+            button = self.make_button(
+                wrap,
+                text,
+                lambda selected=index: self.play_level(selected),
+                primary=unlocked,
+                compact=True,
+            )
+            button.config(font=("Microsoft YaHei UI", 12, "bold"))
+            button.config(state="normal" if unlocked else "disabled")
+            button.pack(fill="x", pady=4)
+        self.make_button(wrap, "返回山门", self.show_start, primary=False, compact=True).pack(pady=12)
+
+    def play_level(self, index: int) -> None:
+        if index > self.unlocked_level:
+            return
+        self.engine.select_level(index)
+        self.show_game()
+
     def show_game(self) -> None:
         self.clear()
         self.animating = False
-        header = tk.Frame(self.root, bg=BG, padx=28, pady=18)
+        self.level_started_at = time.monotonic()
+        self.elapsed_seconds = 0
+        header = tk.Frame(self.root, bg=BG, padx=28, pady=12)
         header.pack(fill="x")
 
-        self.level_label = tk.Label(header, font=("Microsoft YaHei UI", 15, "bold"), fg=WHITE, bg=BG)
+        top_row = tk.Frame(header, bg=BG)
+        top_row.pack(fill="x")
+        self.level_label = tk.Label(top_row, font=("Microsoft YaHei UI", 15, "bold"), fg=WHITE, bg=BG)
         self.level_label.pack(side="left")
         self.info_label = tk.Label(header, font=("Microsoft YaHei UI", 12), fg=MUTED, bg=BG)
-        self.info_label.pack(side="left", padx=28)
-        self.make_button(header, "重整剑阵", self.restart_level, primary=False).pack(side="right")
+        self.info_label.pack(anchor="w", pady=(8, 0))
+        self.make_button(
+            top_row, "重整", self.restart_level, primary=False, compact=True
+        ).pack(side="right", padx=(5, 0))
+        self.make_button(
+            top_row, "撤销", self.undo_last, primary=False, compact=True
+        ).pack(side="right", padx=5)
+        self.make_button(
+            top_row, "提示", self.show_hint, primary=False, compact=True
+        ).pack(side="right", padx=5)
 
         self.canvas = tk.Canvas(self.root, bg=PANEL, highlightthickness=0, cursor="hand2")
         self.canvas.pack(fill="both", expand=True, padx=28, pady=(0, 12))
@@ -142,6 +231,7 @@ class ArrowGameApp:
         self.status_label.pack()
         self.engine.start()
         self.update_header()
+        self.update_timer()
         self.root.after(20, self.render_board)
 
     def update_header(self) -> None:
@@ -150,7 +240,43 @@ class ArrowGameApp:
             text=f"第 {self.engine.level_index + 1}/{len(self.engine.levels)} 关 · {level.name}"
         )
         hearts = "◆" * self.engine.remaining_misses + "◇" * (self.engine.max_misses - self.engine.remaining_misses)
-        self.info_label.config(text=f"阵中飞剑 {self.engine.remaining_arrows}    剑心 {hearts}")
+        self.info_label.config(
+            text=(
+                f"飞剑 {self.engine.remaining_arrows}  剑心 {hearts}  "
+                f"积分 {self.engine.score}  {self.elapsed_seconds:02d}秒"
+            )
+        )
+
+    def update_timer(self) -> None:
+        if self.engine.state == GameState.PLAYING and self.root.winfo_exists():
+            self.elapsed_seconds = int(time.monotonic() - self.level_started_at)
+            if hasattr(self, "info_label") and self.info_label.winfo_exists():
+                self.update_header()
+            self.timer_job = self.root.after(1000, self.update_timer)
+
+    def show_hint(self) -> None:
+        if self.animating or self.engine.state != GameState.PLAYING:
+            return
+        arrow = self.engine.hint()
+        if arrow is None:
+            self.status_label.config(text="此阵暂无线索", fg=RED)
+            return
+        self.render_board(blocker=arrow)
+        self.status_label.config(
+            text=f"剑意所指：第 {arrow.row + 1} 行第 {arrow.col + 1} 列可出剑",
+            fg=YELLOW,
+        )
+
+    def undo_last(self) -> None:
+        if self.animating or self.engine.state != GameState.PLAYING:
+            return
+        if self.engine.undo():
+            self.hover_arrow = None
+            self.update_header()
+            self.render_board()
+            self.status_label.config(text="时光回溯，已撤销上一步", fg=CYAN)
+        else:
+            self.status_label.config(text="当前没有可撤销的步骤", fg=MUTED)
 
     def board_geometry(self) -> tuple[float, float, float]:
         assert self.canvas is not None
@@ -307,9 +433,11 @@ class ArrowGameApp:
         self.update_header()
         self.hover_arrow = None
         if result.success and result.arrow:
+            self.play_sound("fly")
             self.status_label.config(text=result.message, fg=GREEN)
             self.animate_fly(result)
         elif result.arrow:
+            self.play_sound("collision")
             self.status_label.config(text="铮！剑势受阻，剑心 -1", fg=RED)
             self.animate_collision(result)
 
@@ -343,6 +471,7 @@ class ArrowGameApp:
                 self.canvas.delete("flying")
                 self.animating = False
                 if result.level_cleared:
+                    self.play_sound("clear")
                     self.show_result(result.game_won)
                 else:
                     self.render_board()
@@ -443,19 +572,36 @@ class ArrowGameApp:
             self.status_label.config(text="飞剑归位，请另寻剑路", fg=MUTED)
 
     def show_result(self, game_won: bool) -> None:
+        self.elapsed_seconds = int(time.monotonic() - self.level_started_at)
+        stars = 3 if self.engine.remaining_misses == self.engine.max_misses else 2 if self.engine.remaining_misses > 0 else 1
+        level_index = self.engine.level_index
+        self.best_stars[level_index] = max(self.best_stars.get(level_index, 0), stars)
+        if level_index + 1 < len(self.engine.levels):
+            self.unlocked_level = max(self.unlocked_level, level_index + 1)
+        try:
+            save_progress(self.progress_path, self.unlocked_level, self.best_stars)
+        except OSError:
+            pass
         self.clear()
         wrap = tk.Frame(self.root, bg=BG)
         wrap.pack(expand=True)
         tk.Label(wrap, text="劍", font=("STKaiti", 82, "bold"), fg=YELLOW, bg=BG).pack()
-        title = "三境皆破" if game_won else "此境已破"
-        detail = "剑心澄明，三座剑阵尽数勘破" if game_won else "剑路无碍，可往下一境"
+        title = f"{len(self.engine.levels)}境皆破" if game_won else "此境已破"
+        detail = "剑心澄明，诸境剑阵尽数勘破" if game_won else "剑路无碍，可往下一境"
         tk.Label(wrap, text=title, font=("STKaiti", 38, "bold"), fg=WHITE, bg=BG).pack()
         tk.Label(wrap, text=detail, font=("STKaiti", 15), fg=CYAN, bg=BG).pack(pady=(10, 30))
+        tk.Label(
+            wrap,
+            text=f"{'★' * stars}{'☆' * (3 - stars)}    积分 {self.engine.score}    用时 {self.elapsed_seconds} 秒",
+            font=("Microsoft YaHei UI", 14, "bold"), fg=YELLOW, bg=BG,
+        ).pack(pady=(0, 24))
         if game_won:
             self.make_button(wrap, "再入剑阵", self.start_game).pack()
+            self.make_button(wrap, "境界选择", self.show_level_select, primary=False).pack(pady=8)
             self.make_button(wrap, "归返山门", self.show_start, primary=False).pack(pady=14)
         else:
             self.make_button(wrap, "前往下一境", self.go_next_level).pack()
+            self.make_button(wrap, "境界选择", self.show_level_select, primary=False).pack(pady=12)
 
     def show_failure(self) -> None:
         self.clear()

@@ -73,6 +73,14 @@ class MoveResult:
     game_over: bool = False
 
 
+@dataclass(frozen=True)
+class GameSnapshot:
+    arrows: tuple[Arrow, ...]
+    remaining_misses: int
+    score: int
+    state: GameState
+
+
 class GameEngine:
     """只负责游戏规则，不依赖图形界面，便于测试。"""
 
@@ -86,7 +94,9 @@ class GameEngine:
         self.level_index = 0
         self.state = GameState.READY
         self.remaining_misses = max_misses
+        self.score = 0
         self._arrows: dict[tuple[int, int], Arrow] = {}
+        self._history: list[GameSnapshot] = []
         self._load_level(0)
 
     @property
@@ -108,6 +118,8 @@ class GameEngine:
         self.level_index = index
         self._arrows = {(a.row, a.col): a for a in self.levels[index].arrows}
         self.remaining_misses = self.max_misses
+        self.score = 0
+        self._history.clear()
 
     def restart_level(self) -> None:
         self._load_level(self.level_index)
@@ -123,6 +135,35 @@ class GameEngine:
         self._load_level(self.level_index + 1)
         self.state = GameState.PLAYING
         return True
+
+    def select_level(self, index: int) -> None:
+        if not 0 <= index < len(self.levels):
+            raise IndexError("关卡编号超出范围")
+        self._load_level(index)
+        self.state = GameState.PLAYING
+
+    def hint(self) -> Arrow | None:
+        """返回一支当前可以安全飞出的飞剑。"""
+        for arrow in sorted(self._arrows.values(), key=lambda item: (item.row, item.col)):
+            if self.find_blocker(arrow) is None:
+                return arrow
+        return None
+
+    def undo(self) -> bool:
+        """撤销上一次有效点击，包括恢复飞剑、剑心和积分。"""
+        if not self._history:
+            return False
+        snapshot = self._history.pop()
+        self._arrows = {(arrow.row, arrow.col): arrow for arrow in snapshot.arrows}
+        self.remaining_misses = snapshot.remaining_misses
+        self.score = snapshot.score
+        self.state = snapshot.state
+        return True
+
+    def _remember(self) -> None:
+        self._history.append(
+            GameSnapshot(self.arrows, self.remaining_misses, self.score, self.state)
+        )
 
     def arrow_at(self, row: int, col: int) -> Arrow | None:
         return self._arrows.get((row, col))
@@ -149,9 +190,11 @@ class GameEngine:
         if arrow is None:
             return MoveResult(False, "这里没有箭头")
 
+        self._remember()
         blocker = self.find_blocker(arrow)
         if blocker is not None:
             self.remaining_misses -= 1
+            self.score = max(0, self.score - 25)
             game_over = self.remaining_misses <= 0
             if game_over:
                 self.state = GameState.GAME_OVER
@@ -164,6 +207,7 @@ class GameEngine:
             )
 
         del self._arrows[(row, col)]
+        self.score += 100
         if not self._arrows:
             is_last = self.level_index == len(self.levels) - 1
             self.state = GameState.GAME_WON if is_last else GameState.LEVEL_CLEARED

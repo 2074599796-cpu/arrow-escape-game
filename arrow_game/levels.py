@@ -40,4 +40,32 @@ LEVELS = (
             Arrow(6, 1, D),
         ),
     ),
+    Level(
+        "倒悬山",
+        8,
+        8,
+        (
+            Arrow(0, 1, U), Arrow(0, 4, U), Arrow(1, 7, R),
+            Arrow(4, 7, R), Arrow(7, 6, D), Arrow(7, 2, D),
+            Arrow(6, 0, L), Arrow(2, 0, L), Arrow(2, 1, L),
+            Arrow(1, 4, U), Arrow(4, 5, R), Arrow(6, 2, D),
+            Arrow(3, 1, U), Arrow(3, 6, D), Arrow(5, 4, L),
+            Arrow(1, 2, R), Arrow(5, 6, R), Arrow(6, 5, L),
+        ),
+    ),
+    Level(
+        "十四境",
+        9,
+        9,
+        (
+            Arrow(0, 1, U), Arrow(0, 4, U), Arrow(0, 7, U),
+            Arrow(2, 8, R), Arrow(5, 8, R), Arrow(8, 7, D),
+            Arrow(8, 4, D), Arrow(8, 1, D), Arrow(6, 0, L),
+            Arrow(3, 0, L), Arrow(2, 6, R), Arrow(5, 6, R),
+            Arrow(6, 2, L), Arrow(3, 2, L), Arrow(1, 4, U),
+            Arrow(7, 4, D), Arrow(4, 1, U), Arrow(4, 7, D),
+            Arrow(1, 2, L), Arrow(1, 6, R), Arrow(7, 2, L),
+            Arrow(7, 6, R), Arrow(3, 4, U), Arrow(5, 4, D),
+        ),
+    ),
 )
