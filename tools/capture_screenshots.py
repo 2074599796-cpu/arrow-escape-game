@@ -50,6 +50,15 @@ def main() -> None:
     app.start_game()
     capture(root, output_dir / "game.png")
 
+    app.show_hint()
+    capture(root, output_dir / "hint.png")
+
+    hinted_arrow = app.engine.hint()
+    if hinted_arrow is not None:
+        app.engine.click(hinted_arrow.row, hinted_arrow.col)
+        app.undo_last()
+        capture(root, output_dir / "undo.png")
+
     flying_arrow = app.engine.arrow_at(0, 2)
     if flying_arrow is not None:
         app.engine.click(flying_arrow.row, flying_arrow.col)
@@ -80,6 +89,20 @@ def main() -> None:
     app.engine.score = 600
     app.show_result(game_won=False)
     capture(root, output_dir / "success.png")
+
+    app.engine.select_level(4)
+    app.show_game()
+    capture(root, output_dir / "final_level.png")
+
+    app.show_failure()
+    capture(root, output_dir / "failure.png")
+
+    app.engine.select_level(4)
+    app.show_game()
+    app.engine.score = 2400
+    app.level_started_at = time.monotonic() - 87
+    app.show_result(game_won=True)
+    capture(root, output_dir / "final_success.png")
 
     root.destroy()
     app.progress_path.unlink(missing_ok=True)
